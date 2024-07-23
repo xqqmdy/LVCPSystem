@@ -285,11 +285,10 @@ def add_prop_and_empty(self, context, name, add_light, set_child_constraints, bo
                 bone_name = bone.name
                 bone = arm.pose.bones.get(bone_name)
                 if bone:
-                    oo.location = bpy.data.objects[bone.id_data] @ bone.location
+                    oo.location = bone.id_data.matrix_world @ bone.head
                     oo.constraints.new("CHILD_OF")
                     oo.constraints["Child Of"].target = arm
                     oo.constraints["Child Of"].subtarget = bone_name
-                    oo.constraints["Child Of"].inverse_matrix = bone.matrix.inverted()
                 else:
                     self.report({"ERROR"}, "Not found Bone")
 
