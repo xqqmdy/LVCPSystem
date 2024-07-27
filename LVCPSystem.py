@@ -1,23 +1,7 @@
-bl_info = {
-    "name": "LVCPSystem",
-    "description": "Light Vector and Head Vector Management System",
-    "author": "Nifs/Pulse",
-    "version": (0, 0, 2),
-    "blender": (4, 0, 0),
-    "location": "View3D",
-    "warning": "Dev ver.",
-    "wiki_url": "",
-    "tracker_url": "https://github.com/Puls-r/LVCPSystem/issues",
-    "wiki_url": "https://github.com/Puls-r/LVCPSystem",
-    "category": "Object",
-}
-
-
 import bpy
 from bpy.types import Operator, Panel, UIList, PropertyGroup, Collection, NodeTree, Scene
 from bpy.props import StringProperty, BoolProperty, IntProperty, PointerProperty, CollectionProperty
 from mathutils import Vector
-
 
 ##Names##
 COLLECTION_PROP_L = "LL"
@@ -25,9 +9,9 @@ COLLECTION_PROP_F = "FF"
 COLLECTION_PROP_U = "UU"
 COLLECTION_PROP_O = "OO"
 OBJECT_PROP_COL = "lvcp"
-OBJECT_PROP_LIGHT = "matrix_light"
-OBJECT_PROP_FRONT = "matrix_front"
-OBJECT_PROP_UP = "matrix_up"
+OBJECT_PROP_LIGHT = "vecLight"
+OBJECT_PROP_FRONT = "vecFront"
+OBJECT_PROP_UP = "vecUp"
 NODE_OUTPUT_LIGHT = "Light_Vector"
 NODE_OUTPUT_FORWARD = "Forward_Vector"
 NODE_OUTPUT_UP = "Up_Vector"
@@ -92,6 +76,18 @@ def node_center(node_tree):
         node.location = new_loc
 
 
+def get_node_editor_view_center(context):
+    for area in context.screen.areas:
+        if area.type == "NODE_EDITOR":
+            for region in area.regions:
+                if region.type == "WINDOW":
+                    view2d = region.view2d
+                    center_x = (view2d.region_to_view(0, 0)[0] + view2d.region_to_view(region.width, 0)[0]) / 2
+                    center_y = (view2d.region_to_view(0, 0)[1] + view2d.region_to_view(0, region.height)[1]) / 2
+                    return Vector((center_x, center_y))
+    return None
+
+
 ###node###
 
 
@@ -122,25 +118,10 @@ def make_head_vector_node(driver_mode=False):
     g.interface.new_socket(NODE_OUTPUT_FORWARD, in_out="OUTPUT", socket_type="NodeSocketVector")
     g.interface.new_socket(NODE_OUTPUT_UP, in_out="OUTPUT", socket_type="NodeSocketVector")
     ff, uu, oo = None, None, None
-    if driver_mode:
-        ff = add_attribute_node(g, f'["{OBJECT_PROP_COL}"]["{COLLECTION_PROP_O}"]["{OBJECT_PROP_FRONT}"]', COLLECTION_PROP_F, "OBJECT")
-        uu = add_attribute_node(g, f'["{OBJECT_PROP_COL}"]["{COLLECTION_PROP_O}"]["{OBJECT_PROP_UP}"]', COLLECTION_PROP_U, "OBJECT")
-        g.links.new(g_out.inputs[NODE_OUTPUT_FORWARD], ff.outputs["Vector"])
-        g.links.new(g_out.inputs[NODE_OUTPUT_UP], uu.outputs["Vector"])
-    else:
-        ff = add_attribute_node(g, f'["{OBJECT_PROP_COL}"]["{COLLECTION_PROP_F}"].location', COLLECTION_PROP_F, "OBJECT")
-        uu = add_attribute_node(g, f'["{OBJECT_PROP_COL}"]["{COLLECTION_PROP_U}"].location', COLLECTION_PROP_U, "OBJECT")
-        oo = add_attribute_node(g, f'["{OBJECT_PROP_COL}"]["{COLLECTION_PROP_O}"].location', COLLECTION_PROP_O, "OBJECT")
-        vec_subForward = g.nodes.new(type="ShaderNodeVectorMath")
-        vec_subForward.operation = "SUBTRACT"
-        vec_subUp = g.nodes.new(type="ShaderNodeVectorMath")
-        vec_subUp.operation = "SUBTRACT"
-        g.links.new(vec_subForward.inputs[0], ff.outputs[0])
-        g.links.new(vec_subForward.inputs[1], oo.outputs[0])
-        g.links.new(vec_subUp.inputs[0], uu.outputs[0])
-        g.links.new(vec_subUp.inputs[1], oo.outputs[0])
-        g.links.new(g_out.inputs[NODE_OUTPUT_FORWARD], vec_subForward.outputs["Vector"])
-        g.links.new(g_out.inputs[NODE_OUTPUT_UP], vec_subUp.outputs["Vector"])
+    ff = add_attribute_node(g, f'["{OBJECT_PROP_COL}"]["{COLLECTION_PROP_O}"]["{OBJECT_PROP_FRONT}"]', COLLECTION_PROP_F, "OBJECT")
+    uu = add_attribute_node(g, f'["{OBJECT_PROP_COL}"]["{COLLECTION_PROP_O}"]["{OBJECT_PROP_UP}"]', COLLECTION_PROP_U, "OBJECT")
+    g.links.new(g_out.inputs[NODE_OUTPUT_FORWARD], ff.outputs["Vector"])
+    g.links.new(g_out.inputs[NODE_OUTPUT_UP], uu.outputs["Vector"])
     return g
 
 
@@ -163,11 +144,13 @@ def add_l_or_h_group_node(self, context, l, h):
         if node_tree is None:
             self.report({"ERROR"}, "Not found NodeGroup in area")
             return
+        center = get_node_editor_view_center(context)
         if l:
             g = lvcp.light_vector_nodetree
             if g:
                 group_node = node_tree.nodes.new(type="ShaderNodeGroup")
                 group_node.node_tree = g
+                group_node.location = center
                 self.report({"INFO"}, "Light Vector Node Group Added")
             else:
                 self.report({"ERROR"}, "Not found Light Vector Node Group")
@@ -176,7 +159,7 @@ def add_l_or_h_group_node(self, context, l, h):
             if g:
                 group_node = node_tree.nodes.new(type="ShaderNodeGroup")
                 group_node.node_tree = lvcp.head_vector_nodetree
-                group_node.location = group_node.location + Vector((0, -200))
+                group_node.location = center + Vector((200, 0))
                 self.report({"INFO"}, "Head Vector Node Group Added")
             else:
                 self.report({"ERROR"}, "Not found Head Vector Node Group")
@@ -197,7 +180,9 @@ def add_custom_prop(target_context, prop_name, obj):
     target_context[prop_name] = obj
 
 
-def set_drivers(target_context, prop_name, expression, obs, driver_type="SINGLE_PROP", path1=None, path2=None, path3=None):
+def set_drivers(
+    target_context, prop_name, expression, obs, driver_type="SINGLE_PROP", transform_type="LOC", path1=None, path2=None, path3=None
+):
     prop_data_path = f'["{prop_name}"]'
     fcurve = target_context.driver_add(prop_data_path)
     if isinstance(fcurve, list):
@@ -214,7 +199,7 @@ def set_drivers(target_context, prop_name, expression, obs, driver_type="SINGLE_
                     path += f"[{i}]" if path3 == "index" else path3
                     var.targets[0].data_path = path
                 else:
-                    var.targets[0].transform_type = "LOC" + ["_X", "_Y", "_Z"][i]
+                    var.targets[0].transform_type = transform_type + ["_X", "_Y", "_Z"][i]
                     var.targets[0].transform_space = "WORLD_SPACE"
     return fcurve
 
@@ -227,33 +212,27 @@ def add_prop_and_empty(self, context, name, add_light, set_child_constraints, bo
 
     # create empty objects
     oo = add_empty(self, context, "Head_Origin", 0.5, "PLAIN_AXES", (0, 0, 0))  # Head Origin
-    ff = add_empty(self, context, "Head_Forward", 0.1, "CUBE", (0, -1, 0))  # Head Forward
-    uu = add_empty(self, context, "Head_Up", 0.1, "CUBE", (0, 0, 1))  # Head Up
 
     # prepare custom properties
     add_custom_prop(target_context, COLLECTION_PROP_L, None)
     add_custom_prop(target_context, COLLECTION_PROP_O, oo)
-    add_custom_prop(target_context, COLLECTION_PROP_F, ff)
-    add_custom_prop(target_context, COLLECTION_PROP_U, uu)
 
     edit_property(target_context, COLLECTION_PROP_L, "LVCP", "OBJECT")
-    edit_property(target_context, COLLECTION_PROP_F, "LVCP", "OBJECT")
-    edit_property(target_context, COLLECTION_PROP_U, "LVCP", "OBJECT")
     edit_property(target_context, COLLECTION_PROP_O, "LVCP", "OBJECT")
 
     # add objects to collection
     coll.objects.link(oo)
-    coll.objects.link(ff)
-    coll.objects.link(uu)
 
     # parent
-    ff.parent = oo
-    uu.parent = oo
     if driver_mode:
         add_custom_prop(oo, OBJECT_PROP_FRONT, [0.0, 0.0, 0.0])
         add_custom_prop(oo, OBJECT_PROP_UP, [0.0, 0.0, 0.0])
-        set_drivers(target_context=oo, prop_name=OBJECT_PROP_FRONT, expression="var1-var0", obs=[oo, ff], driver_type="TRANSFORMS")
-        set_drivers(target_context=oo, prop_name=OBJECT_PROP_UP, expression="var1-var0", obs=[oo, uu], driver_type="TRANSFORMS")
+        set_drivers(
+            target_context=oo, prop_name=OBJECT_PROP_FRONT, expression="-var0", obs=[oo], path1="matrix_world", path2="[1]", path3="index"
+        )
+        set_drivers(
+            target_context=oo, prop_name=OBJECT_PROP_UP, expression="var0", obs=[oo], path1="matrix_world", path2="[2]", path3="index"
+        )
     # create light object
     if add_light:
         l_coll = get_LVCP().light_collection
@@ -272,7 +251,7 @@ def add_prop_and_empty(self, context, name, add_light, set_child_constraints, bo
                 target_context=ll,
                 prop_name=OBJECT_PROP_LIGHT,
                 expression="var0",
-                obs=[light_obj],
+                obs=[ll],
                 path1="matrix_world",
                 path2="[2]",
                 path3="index",
@@ -586,7 +565,7 @@ class LVCP_OT_RestoreCollection(Operator):
     bl_idname = "lvcp.restore_collection"
     bl_label = "Restore Collection"
     bl_options = {"REGISTER", "UNDO"}
-    bl_description = "Restore from collections with FF, OO, UU and LL properties"
+    bl_description = "Restore from collections with OO and LL properties"
 
     collection_name: StringProperty(name="Collection")  # type: ignore
 
@@ -595,12 +574,7 @@ class LVCP_OT_RestoreCollection(Operator):
         collection = bpy.data.collections.get(collection_name)
         if collection is None:
             self.report({"ERROR"}, "Not found Collection")
-        if (
-            collection.get(COLLECTION_PROP_L)
-            and collection.get(COLLECTION_PROP_F)
-            and collection.get(COLLECTION_PROP_O)
-            and collection.get(COLLECTION_PROP_U)
-        ):
+        if collection.get(COLLECTION_PROP_L) and collection.get(COLLECTION_PROP_O):
             lvcp.add_list()
             lvcp.list.name = collection.name.replace("LVCP_", "")
             lvcp.list.collection = collection
@@ -655,17 +629,39 @@ class LVCP_OT_ConvertToDriverMode(Operator):
             c = l.collection
             if c:
                 oo = c[COLLECTION_PROP_O]
-                ff = c[COLLECTION_PROP_F]
-                uu = c[COLLECTION_PROP_U]
                 if oo:
                     add_custom_prop(oo, OBJECT_PROP_FRONT, [0.0, 0.0, 0.0])
                     add_custom_prop(oo, OBJECT_PROP_UP, [0.0, 0.0, 0.0])
-                    set_drivers(target_context=oo, prop_name=OBJECT_PROP_FRONT, expression="var1-var0", obs=[oo, ff], path="location")
-                    set_drivers(target_context=oo, prop_name=OBJECT_PROP_UP, expression="var1-var0", obs=[oo, uu], path="location")
+                    set_drivers(
+                        target_context=oo,
+                        prop_name=OBJECT_PROP_FRONT,
+                        expression="-var0",
+                        obs=[oo],
+                        path1="matrix_world",
+                        path2="[1]",
+                        path3="index",
+                    )
+                    set_drivers(
+                        target_context=oo,
+                        prop_name=OBJECT_PROP_UP,
+                        expression="var0",
+                        obs=[oo],
+                        path1="matrix_world",
+                        path2="[2]",
+                        path3="index",
+                    )
                 ll = c[COLLECTION_PROP_L]
                 if ll:
                     add_custom_prop(ll, OBJECT_PROP_LIGHT, [0.0, 0.0, 0.0])
-                    set_drivers(target_context=ll, prop_name=OBJECT_PROP_LIGHT, expression="var0", obs=[ll], path="matrix_world[2]")
+                    set_drivers(
+                        target_context=ll,
+                        prop_name=OBJECT_PROP_LIGHT,
+                        expression="var0",
+                        obs=[ll],
+                        path1="matrix_world",
+                        path2="[2]",
+                        path3="index",
+                    )
         lvcp.light_vector_nodetree = None
         lvcp.head_vector_nodetree = None
         make_group_node(self, context, True)
@@ -686,6 +682,33 @@ class LVCP_OT_DelNodeTree(Operator):
         if lvcp.head_vector_nodetree:
             bpy.data.node_groups.remove(lvcp.head_vector_nodetree)
             lvcp.head_vector_nodetree = None
+        return {"FINISHED"}
+
+
+class LVCP_OT_ReplaceNode(Operator):
+    bl_idname = "lvcp.replace_node"
+    bl_label = "Replace Node"
+    bl_options = {"REGISTER", "UNDO"}
+
+    replace_to: StringProperty()  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return context.area.type == "NODE_EDITOR" and context.active_node
+
+    def execute(self, context):
+        lvcp = get_LVCP()
+        node_tree = None
+        if self.replace_to == "Light Vector":
+            node_tree = lvcp.light_vector_nodetree
+        elif self.replace_to == "Head Vector":
+            node_tree = lvcp.head_vector_nodetree
+        active_node = context.active_node
+        if active_node and active_node.type == "GROUP":
+            active_node.node_tree = node_tree
+            self.report({"INFO"}, f"Replaced {self.replace_to}")
+        else:
+            self.report({"ERROR"}, "Not found Group Node")
         return {"FINISHED"}
 
 
@@ -803,16 +826,6 @@ class LVCP_PT_Main_Panel(Panel):
                     box = layout.box()
                     box.label(text="Collection Custom Properties")
                     brow = box.row()
-                    brow.prop(active_lvcp.collection, f'["{COLLECTION_PROP_F}"]', text=COLLECTION_PROP_F)
-                    brow.operator(LVCP_OT_SelectEmpty.bl_idname, icon="RESTRICT_SELECT_OFF", text="").obj = active_lvcp.collection[
-                        COLLECTION_PROP_F
-                    ].name
-                    brow = box.row()
-                    brow.prop(active_lvcp.collection, f'["{COLLECTION_PROP_U}"]', text=COLLECTION_PROP_U)
-                    brow.operator(LVCP_OT_SelectEmpty.bl_idname, icon="RESTRICT_SELECT_OFF", text="").obj = active_lvcp.collection[
-                        COLLECTION_PROP_U
-                    ].name
-                    brow = box.row()
                     brow.prop(active_lvcp.collection, f'["{COLLECTION_PROP_O}"]', text=COLLECTION_PROP_O)
                     brow.operator(LVCP_OT_SelectEmpty.bl_idname, icon="RESTRICT_SELECT_OFF", text="").obj = active_lvcp.collection[
                         COLLECTION_PROP_O
@@ -847,11 +860,11 @@ class LVCP_PT_Sub_Prop_Panel(Panel):
         if lvcp:
             row = layout.row()
             value_column = row.column(align=True)
-            value_column.prop(lvcp.collection[COLLECTION_PROP_L], f'["{OBJECT_PROP_LIGHT}"]', text="Matrix Light")
+            value_column.prop(lvcp.collection[COLLECTION_PROP_L], f'["{OBJECT_PROP_LIGHT}"]', text=OBJECT_PROP_LIGHT)
             value_column = row.column(align=True)
-            value_column.prop(lvcp.collection[COLLECTION_PROP_O], f'["{OBJECT_PROP_FRONT}"]', text="Matrix Front")
+            value_column.prop(lvcp.collection[COLLECTION_PROP_O], f'["{OBJECT_PROP_FRONT}"]', text=OBJECT_PROP_FRONT)
             value_column = row.column(align=True)
-            value_column.prop(lvcp.collection[COLLECTION_PROP_O], f'["{OBJECT_PROP_UP}"]', text="Matrix Up")
+            value_column.prop(lvcp.collection[COLLECTION_PROP_O], f'["{OBJECT_PROP_UP}"]', text=OBJECT_PROP_UP)
 
 
 class LVCP_PT_NodeEditor_Panel(Panel):
@@ -867,6 +880,9 @@ class LVCP_PT_NodeEditor_Panel(Panel):
         row3 = layout.row()
         row1.operator(LVCP_OT_AddGroupNode.bl_idname, icon="NODE", text="Add Group Node")
         row3.template_list("LVCP_UL_List_Panel", "", get_LVCP(), "lists", get_LVCP(), "idx")
+        row = layout.row()
+        row.operator(LVCP_OT_ReplaceNode.bl_idname, text="Replace to Light Vector", icon="NODE").replace_to = "Light Vector"
+        row.operator(LVCP_OT_ReplaceNode.bl_idname, text="Replace to Head Vector", icon="NODE").replace_to = "Head Vector"
 
 
 classes = [
@@ -886,6 +902,7 @@ classes = [
     LVCP_OT_SelectObject,
     LVCP_OT_ConvertToDriverMode,
     LVCP_OT_DelNodeTree,
+    LVCP_OT_ReplaceNode,
     LVCP_UL_List_Panel,
     LVCP_PT_Main_Panel,
     LVCP_PT_Sub_Prop_Panel,
@@ -893,17 +910,14 @@ classes = [
 ]
 
 
-def register():
+# region TABLE
+def register_component():
     for cls in classes:
         bpy.utils.register_class(cls)
-    bpy.types.Scene.LVCP = bpy.props.PointerProperty(type=LVCP)
+    Scene.LVCP = PointerProperty(type=LVCP)
 
 
-def unregister():
-    del bpy.types.Scene.LVCP
+def unregister_component():
+    del Scene.LVCP
     for cls in classes:
         bpy.utils.unregister_class(cls)
-
-
-if __name__ == "__main__":
-    register()
