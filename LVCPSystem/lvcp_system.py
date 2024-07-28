@@ -769,7 +769,6 @@ class LVCP(PropertyGroup):
 
 class LVCP_UL_List_Panel(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        # layout.prop(item, "collection", text=f"{item.name}", emboss=True, icon="COLLECTION_NEW")
         row = layout.row(align=True)
         row.label(text=f"{item.name}", icon="OUTLINER_COLLECTION")
         row.label(text=f"{len(get_objects_with_lvcp(self,context,item))} items")
@@ -910,7 +909,6 @@ classes = [
 ]
 
 
-# region TABLE
 def register_component():
     for cls in classes:
         bpy.utils.register_class(cls)

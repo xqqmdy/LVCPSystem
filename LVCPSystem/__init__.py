@@ -23,11 +23,11 @@ if "bpy" in locals():
 
 
 def register():
-    lvcp_system.register_components()
+    lvcp_system.register_component()
 
 
 def unregister():
-    lvcp_system.unregister_components()
+    lvcp_system.unregister_component()
 
 
 if __name__ == "__main__":
