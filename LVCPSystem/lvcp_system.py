@@ -9,6 +9,7 @@ COLLECTION_PROP_L = "LL"
 COLLECTION_PROP_F = "FF"
 COLLECTION_PROP_U = "UU"
 COLLECTION_PROP_O = "OO"
+COLLECTION_PROP_MASTER = "lightMaster"
 OBJECT_PROP_COL = "lvcp"
 OBJECT_PROP_LIGHT = "vecLight"
 OBJECT_PROP_FRONT = "vecFront"
@@ -25,24 +26,24 @@ class LVCP_LightGroup(PropertyGroup):
 
 class LVCP_List_Main(PropertyGroup):
     name: StringProperty()  # type: ignore
-    collection: PointerProperty(type=Collection)  # type: ignore # LVCP_{name}(Collection)
-    light_master: PointerProperty(type=Object)  # type: ignore # Master(Empty Object)
+    collection: PointerProperty(type=Collection, name="LVCP Collection", description="Collection for LVCP. There is almost no need to change this")  # type: ignore # LVCP_{name}(Collection)
+    light_master: PointerProperty(type=Object, name="Light Master", update=lambda self, context: self.update_light_group(context), description="Return vecLight corresponding to idx from light group")  # type: ignore
     light_group: PointerProperty(type=Collection, update=lambda self, context: self.update_light_group(context))  # type: ignore
-    active_light: PointerProperty(type=Object, name="Active Light", update=lambda self, context: self.update_active_light(context))  # type: ignore
+    active_light: PointerProperty(type=Object, name="Active Light", update=lambda self, context: self.update_active_light(context), description="active --> idx is sync but idx --> active is not sync")  # type: ignore
 
     def _make_lights_arg_string(self):
         return ",".join([f"var{i}" for i in range(len(self.light_group.objects))])
 
     def update_active_light(self, context):
         try:
-            new_idx = self.light_group.objects.find(self.active_light.name)
-            if self.light_master["idx"] != new_idx:
-                self.light_master["idx"] = new_idx
-                self.idx = new_idx
+            self.light_master["idx"] = self.light_group.objects.find(self.active_light.name)
+            self.light_master.update_tag()
+            bpy.context.view_layer.update()
         except KeyError:
             self.light_master["idx"] = 0
 
     def update_light_group(self, context):
+        self.light_master = self.light_group[COLLECTION_PROP_MASTER]
         if self.light_master is None:
             return
         del_drivers(self.light_master, OBJECT_PROP_LIGHT)
@@ -58,12 +59,13 @@ class LVCP_List_Main(PropertyGroup):
         edit_property(self.light_master, "idx").update(
             min=0, max=len(self.light_group.objects) - 1, soft_min=0, soft_max=len(self.light_group.objects) - 1
         )
+        if self.collection[COLLECTION_PROP_L] is None:
+            self.collection[COLLECTION_PROP_L] = self.light_master
         if self.collection.children.get(self.light_group.name) is None:
             for c in self.collection.children:
                 if c.name.startswith("LightGroup_"):
                     self.collection.children.unlink(c)
-
-        link_collection(self.collection, self.light_group)
+            link_collection(self.collection, self.light_group)
 
     def set_driver_head(self, context):
         del_drivers(self.light_master, OBJECT_PROP_FRONT)
@@ -87,8 +89,12 @@ class LVCP_List_Main(PropertyGroup):
             path3="index",
         )
 
-    def hasprop(self, name):
-        return hasattr(self.collection, name)
+    def get_non_light_objects(self):
+        t = []
+        for obj in self.light_group.objects:
+            if OBJECT_PROP_LIGHT not in obj:
+                t.append(obj)
+        return t
 
 
 class LVCP(PropertyGroup):
@@ -112,8 +118,9 @@ class LVCP(PropertyGroup):
     def add_list(self) -> LVCP_List_Main:
         return self.lists.add()
 
-    def remove_list(self) -> None:
-        return self.lists.remove(self.idx)
+    def remove_list(self):
+        self.lists.remove(self.idx)
+        self.idx = 0
 
 
 def get_LVCP() -> LVCP:
@@ -264,15 +271,15 @@ def add_prop_and_empty(self, context, name, set_child_constraints, bone_name, dr
     set_drivers(target_context=oo, prop_name=OBJECT_PROP_UP, expression="var0", obs=[oo], path1="matrix_world", path2="[2]", path3="index")
     # create light object
     l_coll = get_LVCP().light_collection
-    ll = add_empty(self, context, f"Light_Master_{name}", 0.5, "PLAIN_AXES", (0, 0, 0))
-    target_context[COLLECTION_PROP_L] = ll
+    # ll = add_empty(self, context, f"Light_Master", 0.5, "PLAIN_AXES", (0, 0, 0))
+    # target_context[COLLECTION_PROP_L] = ll
     # light = bpy.data.lights.new("Sun", "SUN")
     # light_obj = bpy.data.objects.new("Sun", light)
     # light_obj.location = (0, 0, 0)
     # light_obj.rotation_euler = (0, -3.14, 0)
     # l_coll.objects.link(light_obj)
     # light_obj.parent = ll
-    add_custom_prop(ll, OBJECT_PROP_LIGHT, [0.0, 0.0, 0.0])
+    # add_custom_prop(ll, OBJECT_PROP_LIGHT, [0.0, 0.0, 0.0])
     # set_drivers(
     #     target_context=ll,
     #     prop_name=OBJECT_PROP_LIGHT,
@@ -383,27 +390,27 @@ class LVCP_OT_DelPropAndEmpty(Operator):
     def _del_prop_and_empty(self, context, bool_del_light):
         Lvcp = get_LVCP()
         coll = Lvcp.list.collection
-        lgiht = coll[COLLECTION_PROP_L]
         coll[COLLECTION_PROP_L] = None
         objs = coll.objects
-        if objs:
-            for obj in objs:
-                if hasattr(obj, OBJECT_PROP_FRONT) and hasattr(obj, OBJECT_PROP_UP):
-                    if bool_del_light:
-                        cs = obj.children
-                        for c in cs:
-                            if c.type == "LIGHT":
-                                bpy.data.objects.remove(c)
-                    bpy.data.objects.remove(obj)
+        bpy.data.collections.remove(coll)
+        # if objs:
+        #     for obj in objs:
+        #         if hasattr(obj, OBJECT_PROP_FRONT) and hasattr(obj, OBJECT_PROP_UP):
+        #             if bool_del_light:
+        #                 cs = obj.children
+        #                 for c in cs:
+        #                     if c.type == "LIGHT":
+        #                         bpy.data.objects.remove(c)
+        #             bpy.data.objects.remove(obj)
 
-            bpy.data.collections.remove(coll)
-            get_LVCP().remove_list()
-            self.report({"INFO"}, "Deleted Prop and Empty")
-        else:
-            self.report({"ERROR"}, "Not found Prop and Empty")
+        #     bpy.data.collections.remove(coll)
+        get_LVCP().remove_list()
+        self.report({"INFO"}, "Deleted")
+        # else:
+        #     self.report({"ERROR"}, "Not found Prop and Empty")
 
     def execute(self, context):
-        self._del_prop_and_empty(self, context, self.bool_del_light)
+        self._del_prop_and_empty(context, self.bool_del_light)
         return {"FINISHED"}
 
     def invoke(self, context, event):
@@ -423,7 +430,7 @@ class LVCP_OT_SetPropToObject(Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None and context.mode == "OBJECT"
+        return context.active_object is not None and context.mode == "OBJECT" and context.active_object.type == "MESH"
 
     def _set_prop_to_objcts(self, context):
         objs = bpy.context.selected_objects
@@ -457,7 +464,7 @@ class LVCP_OT_DelPropFromObjects(Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None and context.mode == "OBJECT"
+        return context.active_object is not None and context.mode == "OBJECT" and context.active_object.type == "MESH"
 
     def execute(self, context):
         objs = bpy.context.selected_objects
@@ -720,6 +727,8 @@ class LVCP_OT_AddLightGroup(Operator):
         Lvcp = get_LVCP()
         idx = len(Lvcp.light_group)
         coll = create_collection("LightGroup_" + str(idx))
+        add_custom_prop(coll, COLLECTION_PROP_MASTER, None)
+        edit_property(coll, COLLECTION_PROP_MASTER).update(id_type="OBJECT")
         link_collection(Lvcp.light_collection, coll, True)
         Lvcp.light_group.add()
         Lvcp.light_group[idx].collection = coll
@@ -731,6 +740,23 @@ class LVCP_OT_AddLightGroup(Operator):
             add_custom_prop(lvcp.light_master, "idx", 0)
             edit_property(lvcp.light_master, "idx").update(min=0)
             lvcp.collection.objects.link(lvcp.light_master)
+            coll[COLLECTION_PROP_MASTER] = lvcp.light_master
+        else:
+            master = add_empty(self, context, f"Light_Master", 0.5, "PLAIN_AXES", (0, 0, 0))
+            lvcp.collection.objects.link(master)
+            coll[COLLECTION_PROP_MASTER] = master
+            add_custom_prop(master, OBJECT_PROP_LIGHT, [0.0, 0.0, 0.0])
+            set_drivers(
+                target_context=master,
+                prop_name=OBJECT_PROP_LIGHT,
+                expression="var0",
+                obs=[master],
+                path1="matrix_world",
+                path2="[2]",
+                path3="index",
+            )
+            add_custom_prop(master, "idx", 0)
+            edit_property(master, "idx").update(min=0)
         self.report({"INFO"}, "Added Light Group")
         lvcp.update_light_group(context)
         return {"FINISHED"}
@@ -758,7 +784,7 @@ class LVCP_OT_AddLightEmpty(Operator):
         Lvcp = get_LVCP()
         lv_lcol = Lvcp.light_collection
         lvcp = Lvcp.list
-        empty = add_empty(self, context, f"Light_Direction_{lvcp.idx}", 0.5, "SINGLE_ARROW", (0, 0, 0))
+        empty = add_empty(self, context, f"Light_Direction_{len(lvcp.light_group.objects)}", 0.5, "SINGLE_ARROW", (0, 0, 0))
         add_custom_prop(empty, OBJECT_PROP_LIGHT, [0.0, 0.0, 0.0])
         set_drivers(
             target_context=empty,
@@ -779,10 +805,11 @@ class LVCP_OT_AddLightEmpty(Operator):
 
 
 class LVCP_UL_List_Panel(UIList):
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+    def draw_item(self, context, layout, data, item: LVCP_List_Main, icon, active_data, active_propname, index):
         row = layout.row(align=True)
         row.label(text=f"{item.name}", icon="OUTLINER_COLLECTION")
-        row.label(text=f"{len(get_objects_with_lvcp(self,context,item))} items")
+        row.label(text=f"{item.light_group.name if item.light_group else 'None'}", icon="LIGHT")
+        row.label(text=f"{len(get_objects_with_lvcp(self,context,item))} items", icon="OBJECT_DATA")
         row.operator(LVCP_OT_SelectObject.bl_idname, icon="RESTRICT_SELECT_OFF", text="", emboss=False)
         layout.separator()
 
@@ -821,30 +848,75 @@ class LVCP_PT_Main_Panel(Panel):
         else:
             active_lvcp = Lvcp.list
             row = layout.row()
-            row.operator(LVCP_OT_AddPropAndEmpty.bl_idname, icon="LIGHT", text="Set Up Light Collection")
             if active_lvcp is None:
+                row.operator(LVCP_OT_AddPropAndEmpty.bl_idname, icon="LIGHT", text="Set Up Light Collection")
                 layout.label(text="Please Set Up Light Collection", icon="ERROR")
             else:
                 row = layout.row()
-                row.operator(LVCP_OT_DelPropAndEmpty.bl_idname, icon="X", text="Del Prop And Empty")
-                row = layout.row()
-                row.operator(LVCP_OT_CollectionManager.bl_idname, icon="COLLECTION_NEW", text="Collection Manager")
-                row = layout.row()
-                row.operator(LVCP_OT_RestoreCollection.bl_idname, icon="COLLECTION_NEW", text="Restore Collection")
-                row = layout.row()
-                row.template_list("LVCP_UL_List_Panel", "", Lvcp, "lists", Lvcp, "idx")
+                split = row.split(factor=1.0)  # if add button, factor=0.9
+
+                l_col = split.column()
+                l_col.template_list("LVCP_UL_List_Panel", "", Lvcp, "lists", Lvcp, "idx")
+
+                row2 = l_col.row(align=True)
+                r2_col = row2.column()
+                r2_col.operator(LVCP_OT_AddPropAndEmpty.bl_idname, icon="ADD", text="Add LVCP")
+                r2_col = row2.column()
+                r2_col.operator(LVCP_OT_DelPropAndEmpty.bl_idname, icon="X", text="Del LVCP")
+                row2.separator()
+                r2_col = row2.column()
+                r2_col.operator(LVCP_OT_CollectionManager.bl_idname, icon="FILE_REFRESH", text="")
+                l_col.separator()
+                row = l_col.row(align=True)
                 if active_lvcp:
-                    layout.prop(active_lvcp, "collection", text="LVCP collection")
-                    row = layout.row()
-                    row.operator(LVCP_OT_SetPropToObject.bl_idname, icon="OBJECT_DATAMODE", text="Set Prop To Objects")
-                    row.operator(LVCP_OT_DelPropFromObjects.bl_idname, icon="X", text="Del Prop From Objects")
+                    r2_col = row.column()
+                    # r2_col.prop(active_lvcp, "collection", text="")
+                    r2_col.prop_search(active_lvcp, "collection", Lvcp.lvcp_collection, "children", text="")
+                    r2_col = row.column()
+                    r2_col.operator(LVCP_OT_SetPropToObject.bl_idname, icon="OBJECT_DATAMODE", text="Set Prop To Objects")
+                    r2_col = row.column()
+                    r2_col.operator(LVCP_OT_DelPropFromObjects.bl_idname, icon="X", text="Del Prop From Objects")
+
+
+class LVCP_PT_Sub_LightGroup_Panel(LVCP_PT_Panel, Panel):
+    bl_label = "Light Group"
+    bl_idname = "LVCP_PT_SubLightGroupPanel"
+    bl_parent_id = "LVCP_PT_MainPanel"
+    bl_order = 0
+
+    def draw(self, context):
+        layout = self.layout
+        Lvcp = get_LVCP()
+        active_lvcp = Lvcp.list
+        if active_lvcp.light_group:
+            non_light_obj = active_lvcp.get_non_light_objects()
+            if non_light_obj:
+                layout.label(text=f"Please Delete Non Light Object from {active_lvcp.light_group.name}", icon="ERROR")
+                for obj in non_light_obj:
+                    layout.label(text=obj.name, icon="ERROR")
+            else:
+                box = layout.box()
+                row = box.row()
+                row.prop(active_lvcp, "light_master", text="Light Master")
+                row = box.row()
+                row.prop(active_lvcp, "light_group", text="Light Group")
+                row = box.row()
+                if active_lvcp.light_master:
+                    row.prop(active_lvcp.light_master, f'["idx"]', text="Index")
+                row.prop_search(active_lvcp, "active_light", active_lvcp.light_group, "objects", text="Active Light")
+                row = box.row()
+                row.operator(LVCP_OT_AddLightEmpty.bl_idname, icon="LIGHT", text="Add Light Empty")
+        else:
+            layout.label(text="Please Add Light Group or Select Light Group", icon="ERROR")
+            layout.operator(LVCP_OT_AddLightGroup.bl_idname, icon="LIGHT", text="Add Light Group")
+            layout.prop_search(active_lvcp, "light_group", Lvcp.light_collection, "children", text="Light Group")
 
 
 class LVCP_PT_Sub_Collection_Property_Panel(LVCP_PT_Panel, Panel):
     bl_label = "Collection Property"
     bl_idname = "LVCP_PT_SubCollectionPropertyPanel"
     bl_parent_id = "LVCP_PT_MainPanel"
-    bl_order = 0
+    bl_order = 1
 
     def draw(self, context):
         layout = self.layout
@@ -855,42 +927,17 @@ class LVCP_PT_Sub_Collection_Property_Panel(LVCP_PT_Panel, Panel):
             box.label(text="Collection Custom Properties")
             row = box.row()
             row.prop(active_lvcp.collection, f'["{COLLECTION_PROP_O}"]', text=COLLECTION_PROP_O)
-            row.operator(LVCP_OT_SelectEmpty.bl_idname, icon="RESTRICT_SELECT_OFF", text="").obj = active_lvcp.collection[
-                COLLECTION_PROP_O
-            ].name
+            if active_lvcp.collection[COLLECTION_PROP_O]:
+                row.operator(LVCP_OT_SelectEmpty.bl_idname, icon="RESTRICT_SELECT_OFF", text="").obj = active_lvcp.collection[
+                    COLLECTION_PROP_O
+                ].name
             row = box.row()
             row.prop(active_lvcp.collection, f'["{COLLECTION_PROP_L}"]', text=COLLECTION_PROP_L)
-            row.operator(LVCP_OT_SelectEmpty.bl_idname, icon="RESTRICT_SELECT_OFF", text="").obj = active_lvcp.collection[
-                COLLECTION_PROP_L
-            ].name
+            if active_lvcp.collection[COLLECTION_PROP_L]:
+                row.operator(LVCP_OT_SelectEmpty.bl_idname, icon="RESTRICT_SELECT_OFF", text="").obj = active_lvcp.collection[
+                    COLLECTION_PROP_L
+                ].name
             layout.separator()
-
-
-class LVCP_PT_Sub_LightGroup_Panel(LVCP_PT_Panel, Panel):
-    bl_label = "Light Group"
-    bl_idname = "LVCP_PT_SubLightGroupPanel"
-    bl_parent_id = "LVCP_PT_MainPanel"
-    bl_order = 1
-
-    def draw(self, context):
-        layout = self.layout
-        Lvcp = get_LVCP()
-        active_lvcp = Lvcp.list
-        if active_lvcp.light_group:
-            box = layout.box()
-            row = box.row()
-            row.prop(active_lvcp, "light_master", text="Light Master")
-            row = box.row()
-            row.prop(active_lvcp, "light_group", text="Light Group")
-            row = box.row()
-            row.prop(active_lvcp.light_master, f'["idx"]', text="Index")
-            row.prop_search(active_lvcp, "active_light", active_lvcp.light_group, "objects", text="Active Light")
-            row = box.row()
-            row.operator(LVCP_OT_AddLightEmpty.bl_idname, icon="LIGHT", text="Add Light Empty")
-        else:
-            layout.label(text="Please Add Light Group or Select Light Group", icon="ERROR")
-            layout.operator(LVCP_OT_AddLightGroup.bl_idname, icon="LIGHT", text="Add Light Group")
-            layout.prop_search(active_lvcp, "light_group", Lvcp, "light_group", text="Light Group")
 
 
 class LVCP_PT_Sub_NodeTree_Panel(LVCP_PT_Panel, Panel):
@@ -926,15 +973,16 @@ class LVCP_PT_Sub_Prop_Panel(LVCP_PT_Panel, Panel):
             box = layout.box()
             row = box.row()
             value_column = row.column(align=True)
-
-            value_column.prop(lvcp.collection[COLLECTION_PROP_L], f'["{OBJECT_PROP_LIGHT}"]', text=OBJECT_PROP_LIGHT)
-
+            if lvcp.collection[COLLECTION_PROP_L]:
+                value_column.prop(lvcp.collection[COLLECTION_PROP_L], f'["{OBJECT_PROP_LIGHT}"]', text=OBJECT_PROP_LIGHT)
+            else:
+                value_column.label(text=f"Not Found {OBJECT_PROP_LIGHT}", icon="ERROR")
             value_column = row.column(align=True)
-
-            value_column.prop(lvcp.collection[COLLECTION_PROP_O], f'["{OBJECT_PROP_FRONT}"]', text=OBJECT_PROP_FRONT)
-
+            if lvcp.collection[COLLECTION_PROP_O]:
+                value_column.prop(lvcp.collection[COLLECTION_PROP_O], f'["{OBJECT_PROP_FRONT}"]', text=OBJECT_PROP_FRONT)
             value_column = row.column(align=True)
-            value_column.prop(lvcp.collection[COLLECTION_PROP_O], f'["{OBJECT_PROP_UP}"]', text=OBJECT_PROP_UP)
+            if lvcp.collection[COLLECTION_PROP_O]:
+                value_column.prop(lvcp.collection[COLLECTION_PROP_O], f'["{OBJECT_PROP_UP}"]', text=OBJECT_PROP_UP)
 
 
 class LVCP_PT_NodeEditor_Panel(LVCP_PT_Panel, Panel):
