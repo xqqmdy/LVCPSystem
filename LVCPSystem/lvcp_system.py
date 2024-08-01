@@ -147,6 +147,25 @@ def link_collection(target, source, unlink=False):
     target.children.link(source)
 
 
+def exclude_collection_from_view_layer(collection_name):
+    target_collection = bpy.data.collections.get(collection_name)
+    if target_collection:
+        view_layer = bpy.context.view_layer
+
+        def find_layer_collection(layer_collection, collection):
+            if layer_collection.collection == collection:
+                return layer_collection
+            for child in layer_collection.children:
+                found = find_layer_collection(child, collection)
+                if found:
+                    return found
+            return None
+
+        layer_collection = find_layer_collection(view_layer.layer_collection, target_collection)
+        if layer_collection:
+            layer_collection.exclude = True
+
+
 def get_node_editor_view_center(context):
     for area in context.screen.areas:
         if area.type == "NODE_EDITOR":
@@ -570,6 +589,7 @@ class LVCP_OT_MakeLightCollection(Operator):
         coll.color_tag = "COLOR_03"
         get_LVCP().light_collection = coll
         link_collection(get_LVCP().lvcp_collection, coll, True)
+        exclude_collection_from_view_layer(coll.name)
         return {"FINISHED"}
 
 
@@ -906,6 +926,8 @@ class LVCP_PT_Sub_LightGroup_Panel(LVCP_PT_Panel, Panel):
                 row.prop_search(active_lvcp, "active_light", active_lvcp.light_group, "objects", text="Active Light")
                 row = box.row()
                 row.operator(LVCP_OT_AddLightEmpty.bl_idname, icon="LIGHT", text="Add Light Empty")
+                if active_lvcp.active_light:
+                    row.operator(LVCP_OT_SelectEmpty.bl_idname, icon="RESTRICT_SELECT_OFF", text="").obj = active_lvcp.active_light.name
         else:
             layout.label(text="Please Add Light Group or Select Light Group", icon="ERROR")
             layout.operator(LVCP_OT_AddLightGroup.bl_idname, icon="LIGHT", text="Add Light Group")
